@@ -1,0 +1,11 @@
+1x Trafo (http://www.reichelt.de/index.html?ARTICLE=27308)
+4x 1N4148
+1x Elko radial 33µF 35V (http://www.reichelt.de/index.html?ARTICLE=121277)
+1x Relaix 24V Schließer (http://www.reichelt.de/index.html?ARTICLE=79419)
+2x Anschlussklemme 3-polig (http://www.reichelt.de/index.html?ARTICLE=72070)
+1x Anschlussklemme 2-polig (http://www.reichelt.de/index.html?ARTICLE=36612)
+
+Gehäuse?
+
+Vorhanden:
+1x Schalter im Türschloss
