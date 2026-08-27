@@ -75,9 +75,9 @@ void mqtt_message_callback(struct mosquitto *mosq,
                           const struct mosquitto_message *message)
 {
   if (message->payloadlen)
-    printf("got message '%.*s' for topic '%s'\n", message->payloadlen, (char*) message->payload, message->topic);
+    syslog(LOG_INFO, "got message '%.*s' for topic '%s'\n", message->payloadlen, (char*) message->payload, message->topic);
   else
-    printf("Got empty message for topic '%s'\n", message->topic);
+    syslog(LOG_INFO, "Got empty message for topic '%s'\n", message->topic);
 
   bool match = false;
   mosquitto_topic_matches_sub(MQTT_AMPEL_TOPIC, message->topic, &match);
