@@ -216,6 +216,9 @@ int main(int argc, char *argv[]) {
     sleep(1);
   }
 
+  // Leave illumination in a safe state on shutdown.
+  ampel_set_color(AMPEL_OFF);
+
   mqtt_service_cleanup(mosq);
   service_stop("Ampel controller finished.");
   return 0;
