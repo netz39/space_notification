@@ -71,6 +71,8 @@ void I3C_reset_ampel() {
 ///// Ampel /////
 
 static struct ampel_state_t AMPEL_OFF = { false, false, false };
+static struct ampel_state_t AMPEL_RED = { true, false, false };
+static struct ampel_state_t AMPEL_GREEN = { false, true, false };
 
 static time_t monotonic_now(void) {
   struct timespec ts;
@@ -184,6 +186,14 @@ int main(int argc, char *argv[]) {
 
   // initialize I2C
   I2C_init();
+
+  // Show a start-up sequence
+  ampel_set_color(AMPEL_RED);
+  sleep(1);
+  ampel_set_color(AMPEL_GREEN);
+  sleep(1);
+  ampel_set_color(AMPEL_OFF);
+  sleep(1);
 
   // initialize MQTT
   struct mosquitto *mosq = mqtt_service_init("ampel");
