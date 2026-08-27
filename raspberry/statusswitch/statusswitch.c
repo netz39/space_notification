@@ -113,11 +113,6 @@ int main(int argc, char *argv[]) {
     struct lever_state_t ls;
     decode_lever_state(status, &ls);
 
-    syslog(LOG_DEBUG, "Lever status byte: 0x%02x\n", status);
-    syslog(LOG_DEBUG, "Open:\t%s\n", ls.lever_open ? "yes" : "no");
-    syslog(LOG_DEBUG, "Closed:\t%s\n", ls.lever_closed ? "yes" : "no");
-    syslog(LOG_DEBUG, "\n");
-
     // Check door status for changes and emit MQTT messages
     mqtt_payload[0] = 0;
 
