@@ -162,19 +162,15 @@ void mqtt_message_callback(struct mosquitto *mosq,
       return;
 
     if (strcmp(payload, "on") == 0) {
-      if (!nightmode_active) {
-        syslog(LOG_INFO, "Nightmode enabled.");
-        nightmode_active = true;
-        nightmode_show_until = 0;
-        ampel_set_color(AMPEL_OFF);
-      }
+      syslog(LOG_INFO, "Nightmode enabled.");
+      nightmode_active = true;
+      nightmode_show_until = 0;
+      ampel_set_color(AMPEL_OFF);
     } else if (strcmp(payload, "off") == 0) {
-      if (nightmode_active) {
-        syslog(LOG_INFO, "Nightmode disabled.");
-        nightmode_active = false;
-        nightmode_show_until = 0;
-        ampel_set_color(requested_state);
-      }
+      syslog(LOG_INFO, "Nightmode disabled.");
+      nightmode_active = false;
+      nightmode_show_until = 0;
+      ampel_set_color(requested_state);
     }
   }
 }
