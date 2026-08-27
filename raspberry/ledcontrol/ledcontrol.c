@@ -109,6 +109,7 @@ void mqtt_message_callback(struct mosquitto *mosq,
 
 int main(int argc, char *argv[]) {
   service_start("ampel", "Starting Ampel controller.");
+  service_setup_signals();
 
   // initialize I2C
   I2C_init();
@@ -121,18 +122,18 @@ int main(int argc, char *argv[]) {
     if (ret != MOSQ_ERR_SUCCESS) {
       mqtt_service_cleanup(mosq);
       service_stop("Ampel controller finished.");
-      return -1;
+      return 1;
     }
 
     mosquitto_message_callback_set(mosq, mqtt_message_callback);
     mosquitto_subscribe(mosq, NULL, MQTT_AMPEL_TOPIC, 0);
   }
 
-  while (1) {
-    mqtt_service_loop(mosq, 100);
+  service_notify_ready();
 
-    if (sleep(1))
-      break;
+  while (service_is_running()) {
+    mqtt_service_loop(mosq, 100);
+    sleep(1);
   }
 
   mqtt_service_cleanup(mosq);

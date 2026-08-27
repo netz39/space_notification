@@ -83,6 +83,7 @@ void decode_lever_state(uint8_t state,
 
 int main(int argc, char *argv[]) {
   service_start("statusswitch", "Starting statusswitch observer.");
+  service_setup_signals();
 
   // initialize I2C
   I2C_init();
@@ -95,25 +96,26 @@ int main(int argc, char *argv[]) {
     if (ret != MOSQ_ERR_SUCCESS) {
       mqtt_service_cleanup(mosq);
       service_stop("Doorstate observer finished.");
-      return -1;
+      return 1;
     }
   }
 
+  service_notify_ready();
+
   char mqtt_payload[MQTT_MSG_MAXLEN];
-  
+
   // the known lever status
   struct lever_state_t before;
   decode_lever_state(lever_getstate(), &before);
-  
-  char run=1;
-  int i=0;
-  while(run) {
+
+  int i = 0;
+  while (service_is_running()) {
     printf("****** %u\n", i++);
 
     uint8_t status = lever_getstate();
     struct lever_state_t ls;
     decode_lever_state(status, &ls);
-    
+
     printf("Lever status byte: 0x%02x\n", status);
     printf("Open:\t%s\n", (ls.lever_open ? "yes" : "no"));
     printf("Closed:\t%s\n", (ls.lever_closed ? "yes" : "no"));
@@ -126,14 +128,12 @@ int main(int argc, char *argv[]) {
     if (before.lever_closed != ls.lever_closed) {
       if (ls.lever_closed && !ls.lever_open) {
         syslog(LOG_INFO, "Lever has been switched to closed.");
-        //MQTT message
         strcpy(mqtt_payload, MQTT_MSG_LEVERCLOSED);
       } else if (ls.lever_closed == ls.lever_open) {
         syslog(LOG_INFO, "Lever has been switched to neutral state.");
-        //MQTT message
-        strcpy(mqtt_payload, MQTT_MSG_LEVERNEUTRAL);      
+        strcpy(mqtt_payload, MQTT_MSG_LEVERNEUTRAL);
       }
-      
+
       before.lever_closed = ls.lever_closed;
     }
 
@@ -141,14 +141,12 @@ int main(int argc, char *argv[]) {
     if (before.lever_open != ls.lever_open) {
       if (ls.lever_open && !ls.lever_closed) {
         syslog(LOG_INFO, "Lever has been switched to open.");
-        //MQTT message
         strcpy(mqtt_payload, MQTT_MSG_LEVEROPEN);
       } else if (ls.lever_closed == ls.lever_open) {
         syslog(LOG_INFO, "Lever has been switched to neutral state.");
-        //MQTT message
-        strcpy(mqtt_payload, MQTT_MSG_LEVERNEUTRAL);      
+        strcpy(mqtt_payload, MQTT_MSG_LEVERNEUTRAL);
       }
-      
+
       before.lever_open = ls.lever_open;
     }
 
@@ -158,7 +156,7 @@ int main(int argc, char *argv[]) {
       int mid;
       // state message
       ret = mosquitto_publish(
-                        mosq, 
+                        mosq,
                         &mid,
                         MQTT_TOPIC_STATE,
                         strlen(mqtt_payload), mqtt_payload,
@@ -166,18 +164,18 @@ int main(int argc, char *argv[]) {
                         true /* retain */
                        );
       if (ret != MOSQ_ERR_SUCCESS)
-        syslog(LOG_ERR, "MQTT error on message \"%s\": %d (%s)", 
-                        mqtt_payload, 
+        syslog(LOG_ERR, "MQTT error on message \"%s\": %d (%s)",
+                        mqtt_payload,
                         ret,
                         mosquitto_strerror(ret));
       else
-        syslog(LOG_INFO, "MQTT message \"%s\" sent with id %d.", 
+        syslog(LOG_INFO, "MQTT message \"%s\" sent with id %d.",
                          mqtt_payload, mid);
-                         
+
       // change event
       strcpy(mqtt_payload, MQTT_MSG_LEVERCHANGE);
       ret = mosquitto_publish(
-                        mosq, 
+                        mosq,
                         &mid,
                         MQTT_TOPIC_EVENTS,
                         strlen(mqtt_payload), mqtt_payload,
@@ -185,22 +183,20 @@ int main(int argc, char *argv[]) {
                         false /* don't retain */
                        );
       if (ret != MOSQ_ERR_SUCCESS)
-        syslog(LOG_ERR, "MQTT error on message \"%s\": %d (%s)", 
-                        mqtt_payload, 
+        syslog(LOG_ERR, "MQTT error on message \"%s\": %d (%s)",
+                        mqtt_payload,
                         ret,
                         mosquitto_strerror(ret));
       else
-        syslog(LOG_INFO, "MQTT message \"%s\" sent with id %d.", 
+        syslog(LOG_INFO, "MQTT message \"%s\" sent with id %d.",
                          mqtt_payload, mid);
-      
     }
 
     mqtt_service_loop(mosq, 100);
 
     I3C_reset_lever();
-    
-    if (sleep(1)) 
-      break;
+
+    sleep(1);
   }
 
   mqtt_service_cleanup(mosq);
