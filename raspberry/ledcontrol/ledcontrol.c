@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 
 #include "../common/i2c_command.h"
 #include "../common/mqtt_service.h"
@@ -16,12 +17,26 @@
 const char* MQTT_HOST 		= "platon.n39.eu";
 const int   MQTT_PORT 		= 1883;
 const char* MQTT_AMPEL_TOPIC	= "Netz39/Things/Ampel/Light";
+const char* MQTT_NIGHTMODE_TOPIC= "Netz39/Nightmode";
+
+/* Duration (seconds) to keep LEDs on after an ampel change during nightmode */
+#define NIGHTMODE_VISIBILITY_SECS 2
 
 struct ampel_state_t {
   bool red;
   bool green;
   bool blink;
 };
+
+/* Global nightmode state */
+static bool nightmode_active = false;
+
+/* Most recently requested ampel state (independent of physical output) */
+static struct ampel_state_t requested_state = { false, false, false };
+
+/* Monotonic time (seconds) when the brief nightmode visibility expires;
+ * 0 means no timer is running. */
+static time_t nightmode_show_until = 0;
 
 ///// I2C stuff /////
 
@@ -55,6 +70,14 @@ void I3C_reset_ampel() {
 
 ///// Ampel /////
 
+static struct ampel_state_t AMPEL_OFF = { false, false, false };
+
+static time_t monotonic_now(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec;
+}
+
 uint8_t ampel_set_color(struct ampel_state_t color) {
   uint8_t val = 0;
   val |= color.red   ? AMPEL_VAL_RED   : 0;
@@ -68,6 +91,23 @@ uint8_t ampel_set_color(struct ampel_state_t color) {
   return ret;
 }
 
+/**
+ * Apply physical LED output based on current nightmode state.
+ * During nightmode the LEDs stay off unless the brief visibility timer is
+ * active.  Outside nightmode the requested state is shown as-is.
+ */
+static void apply_physical_state(void) {
+  if (!nightmode_active) {
+    ampel_set_color(requested_state);
+    return;
+  }
+
+  if (nightmode_show_until != 0 && monotonic_now() < nightmode_show_until)
+    ampel_set_color(requested_state);
+  else
+    ampel_set_color(AMPEL_OFF);
+}
+
 ///// Command events
 
 void mqtt_message_callback(struct mosquitto *mosq,
@@ -79,9 +119,9 @@ void mqtt_message_callback(struct mosquitto *mosq,
   else
     syslog(LOG_INFO, "Got empty message for topic '%s'\n", message->topic);
 
-  bool match = false;
-  mosquitto_topic_matches_sub(MQTT_AMPEL_TOPIC, message->topic, &match);
-  if (match) {
+  bool match_ampel = false;
+  mosquitto_topic_matches_sub(MQTT_AMPEL_TOPIC, message->topic, &match_ampel);
+  if (match_ampel) {
     const char* command = message->payload;
 
     struct ampel_state_t state = { .red = false, .green = false, .blink = false };
@@ -101,8 +141,39 @@ void mqtt_message_callback(struct mosquitto *mosq,
       state.blink = true;
     }
 
-    // Set the traffic light state
-    ampel_set_color(state);
+    requested_state = state;
+
+    if (nightmode_active) {
+      /* Show state briefly; (re)start the visibility timer */
+      nightmode_show_until = monotonic_now() + NIGHTMODE_VISIBILITY_SECS;
+    }
+
+    apply_physical_state();
+    return;
+  }
+
+  bool match_nightmode = false;
+  mosquitto_topic_matches_sub(MQTT_NIGHTMODE_TOPIC, message->topic, &match_nightmode);
+  if (match_nightmode) {
+    const char* payload = message->payload;
+    if (!payload)
+      return;
+
+    if (strcmp(payload, "on") == 0) {
+      if (!nightmode_active) {
+        syslog(LOG_INFO, "Nightmode enabled.");
+        nightmode_active = true;
+        nightmode_show_until = 0;
+        ampel_set_color(AMPEL_OFF);
+      }
+    } else if (strcmp(payload, "off") == 0) {
+      if (nightmode_active) {
+        syslog(LOG_INFO, "Nightmode disabled.");
+        nightmode_active = false;
+        nightmode_show_until = 0;
+        ampel_set_color(requested_state);
+      }
+    }
   }
 }
 
@@ -127,12 +198,21 @@ int main(int argc, char *argv[]) {
 
     mosquitto_message_callback_set(mosq, mqtt_message_callback);
     mosquitto_subscribe(mosq, NULL, MQTT_AMPEL_TOPIC, 0);
+    mosquitto_subscribe(mosq, NULL, MQTT_NIGHTMODE_TOPIC, 0);
   }
 
   service_notify_ready();
 
   while (service_is_running()) {
     mqtt_service_loop(mosq, 100);
+
+    /* During nightmode, check if the brief visibility timer has just expired */
+    if (nightmode_active && nightmode_show_until != 0
+        && monotonic_now() >= nightmode_show_until) {
+      nightmode_show_until = 0;
+      ampel_set_color(AMPEL_OFF);
+    }
+
     sleep(1);
   }
 
