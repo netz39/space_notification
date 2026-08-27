@@ -7,11 +7,9 @@
 #include <unistd.h>
 #include <string.h>
 
-#include <syslog.h>
-
 #include "../common/i2c_command.h"
-
-#include <mosquitto.h>
+#include "../common/mqtt_service.h"
+#include "../common/service.h"
 
 #define I2C_ADDR_LEVER	    0x24
 
@@ -84,38 +82,23 @@ void decode_lever_state(uint8_t state,
                         
 
 int main(int argc, char *argv[]) {
-  // initialize the system logging
-  openlog("statusswitch", LOG_CONS | LOG_PID, LOG_USER);
-  syslog(LOG_INFO, "Starting statusswitch observer.");
+  service_start("statusswitch", "Starting statusswitch observer.");
 
   // initialize I2C
   I2C_init();
-  
+
   // initialize MQTT
-  mosquitto_lib_init();
-  
-  void *mqtt_obj;
-  struct mosquitto *mosq;
-  mosq = mosquitto_new("statusswitch", true, mqtt_obj);
-  if ((int)mosq == ENOMEM) {
-    syslog(LOG_ERR, "Not enough memory to create a new mosquitto session.");
-    mosq = NULL;
-  }
-  if ((int)mosq == EINVAL) {
-    syslog(LOG_ERR, "Invalid values for creating mosquitto session.");
-    return -1;
-  }
-  
+  struct mosquitto *mosq = mqtt_service_init("statusswitch");
+
   if (mosq) {
-    int ret;
-    
-    ret = mosquitto_connect(mosq, MQTT_HOST, MQTT_PORT, 30);
-    if (ret == MOSQ_ERR_SUCCESS)
-      syslog(LOG_INFO, "MQTT connection to %s established.", MQTT_HOST);
-      
-    // TODO error handling
+    int ret = mqtt_service_connect(mosq, MQTT_HOST, MQTT_PORT, 30);
+    if (ret != MOSQ_ERR_SUCCESS) {
+      mqtt_service_cleanup(mosq);
+      service_stop("Doorstate observer finished.");
+      return -1;
+    }
   }
-  
+
   char mqtt_payload[MQTT_MSG_MAXLEN];
   
   // the known lever status
@@ -211,15 +194,8 @@ int main(int argc, char *argv[]) {
                          mqtt_payload, mid);
       
     }
-    
-    // call the mosquitto loop to process messages
-    if (mosq) {
-      int ret;
-      ret = mosquitto_loop(mosq, 100, 1);
-      // if failed, try to reconnect
-      if (ret)
-        mosquitto_reconnect(mosq);
-    }
+
+    mqtt_service_loop(mosq, 100);
 
     I3C_reset_lever();
     
@@ -227,15 +203,7 @@ int main(int argc, char *argv[]) {
       break;
   }
 
-  // clean-up MQTT
-  if (mosq) {
-    mosquitto_disconnect(mosq);
-    mosquitto_destroy(mosq);
-  }
-  mosquitto_lib_cleanup();
-
-  syslog(LOG_INFO, "Doorstate observer finished.");
-  closelog();
-    
+  mqtt_service_cleanup(mosq);
+  service_stop("Doorstate observer finished.");
   return 0;
 }
