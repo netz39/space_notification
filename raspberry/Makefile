@@ -13,17 +13,17 @@ USE_STUB ?= 0
 
 ifeq ($(USE_STUB), 1)
   I2C_HAL_OBJ = common/i2c_hal_stub.o
-  LDLIBS      = -lpthread -lm -lmosquitto
+  LDLIBS      = -lpthread -lm -lmosquitto -lsystemd
 else
   I2C_HAL_OBJ = common/i2c_hal_wiringpi.o
-  LDLIBS      = -lwiringPi -lwiringPiDev -lpthread -lm -lmosquitto
+  LDLIBS      = -lwiringPi -lwiringPiDev -lpthread -lm -lmosquitto -lsystemd
 endif
 
 TARGETS  = ledcontrol statusswitch
 BINARIES = $(foreach target,$(TARGETS),$(target)/$(target))
 OBJECTS  = $(addsuffix .o,$(BINARIES))
 
-COMMON_OBJS = $(I2C_HAL_OBJ) common/mqtt_service.o
+COMMON_OBJS = $(I2C_HAL_OBJ) common/mqtt_service.o common/service.o
 
 .PHONY: all dev clean
 
