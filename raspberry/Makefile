@@ -23,6 +23,8 @@ TARGETS  = ledcontrol statusswitch
 BINARIES = $(foreach target,$(TARGETS),$(target)/$(target))
 OBJECTS  = $(addsuffix .o,$(BINARIES))
 
+COMMON_OBJS = $(I2C_HAL_OBJ) common/mqtt_service.o
+
 .PHONY: all dev clean
 
 all: $(BINARIES)
@@ -30,11 +32,11 @@ all: $(BINARIES)
 dev:
 	$(MAKE) USE_STUB=1
 
-$(BINARIES): %: %.o $(I2C_HAL_OBJ)
+$(BINARIES): %: %.o $(COMMON_OBJS)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 %.o: %.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 clean:
-	rm -f $(OBJECTS) $(BINARIES) $(I2C_HAL_OBJ)
+	rm -f $(OBJECTS) $(BINARIES) $(COMMON_OBJS)
