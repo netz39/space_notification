@@ -8,10 +8,10 @@
 #include <string.h>
 
 #include <time.h>
+#include <sys/time.h>
 #include <syslog.h>
 
-#include <wiringPi.h>
-#include <wiringPiI2C.h>
+#include "../common/i2c_command.h"
 
 #include <mosquitto.h>
 
@@ -61,86 +61,11 @@ struct I2C_descriptors {
 #define I2C_FD_LEVER (I2C_fd.lever)
 
 /**
-  * Initialize an I2C channel to the specified address. Exits with an error
-  * message if the initialization fails,
-  *
-  * @param addr The target address.
-  * @return File Descriptor for the I2C channel
-  */
-int I2C_setup_fd(const int addr) {
-  const int fd = wiringPiI2CSetup(addr);
-  if (!fd) {
-    syslog(LOG_EMERG, "Error %d on I2C initialization!", errno);
-    exit(-1);
-  }
-  return fd;
-}
-
-/**
   * Initialize all I2C channels and store the file descriptors.
   */
 void I2C_init(void) {
   I2C_fd.lever = I2C_setup_fd(I2C_ADDR_LEVER);
 }
-
-#define I2C_ERR_INVALIDARGUMENT -2
-
-  union I2C_result {
-    unsigned char c[2];
-    unsigned short r;
-  };
-
-
-int I2C_command(const int fd, const char command, const char data) {
-  // check parameter range
-  if ((command < 0) || (command > 0x07))
-    return I2C_ERR_INVALIDARGUMENT;
-  if ((data < 0) || (data > 0x0f))
-    return I2C_ERR_INVALIDARGUMENT;
-  
-  // TODO check fd
-  
-    
-  // build the I2C data byte
-  // arguments have been checked, 
-  // this cannot be negative or more than 8 bits
-  unsigned char send = (command << 4) + data; 
-  
-  // calculate the parity
-  char v = send;
-  char c;
-  for (c = 0; v; c++) 
-    v &= v-1;
-  c &= 1;
-
-  // set parity bit  
-  send += (c << 7);
-  
-  union I2C_result result;
-  result.r = 0;
-
-  // maximal number of tries
-  int hops=20;
-
-  // try for hops times until the result is not zero
-  while (!result.c[0] && --hops) {
-    // send command
-    result.r = wiringPiI2CReadReg16(fd, send);
-
-    // check for transmission errors: 2nd byte is inverted 1st byte
-    const unsigned char c = ~result.c[0];
-    if (result.c[1] != c) 
-      // if no match, reset the result
-      result.r = 0;
-  }
-  
-  if (!hops)
-    syslog(LOG_DEBUG, "Giving up transmission!\n");
-  
-  return result.c[0];
-}
-
-///// I3C stuff /////
 
 #define LEVER_CMD_RESET		0x00
 #define LEVER_CMD_GETSTATE	0x01
