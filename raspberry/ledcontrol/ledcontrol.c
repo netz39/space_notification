@@ -7,11 +7,9 @@
 #include <unistd.h>
 #include <string.h>
 
-#include <syslog.h>
-
 #include "../common/i2c_command.h"
-
-#include <mosquitto.h>
+#include "../common/mqtt_service.h"
+#include "../common/service.h"
 
 #define I2C_ADDR_AMPEL		0x20
 
@@ -110,74 +108,34 @@ void mqtt_message_callback(struct mosquitto *mosq,
 
 
 int main(int argc, char *argv[]) {
-  // initialize the system logging
-  openlog("ampel", LOG_CONS | LOG_PID, LOG_USER);
-  syslog(LOG_INFO, "Starting Ampel controller.");
+  service_start("ampel", "Starting Ampel controller.");
 
   // initialize I2C
   I2C_init();
-  
+
   // initialize MQTT
-  mosquitto_lib_init();
-  
-  void *mqtt_obj;
-  struct mosquitto *mosq;
-  mosq = mosquitto_new("ampel", true, mqtt_obj);
-  if (((int)mosq == ENOMEM) || ((int)mosq == EINVAL)) {
-        syslog(LOG_ERR, "MQTT error %d (%s)!", 
-                        (int)mosq,
-                        mosquitto_strerror((int)mosq));
-    mosq = NULL;
-  }
-  
+  struct mosquitto *mosq = mqtt_service_init("ampel");
+
   if (mosq) {
-    int ret;
-    
-    ret = mosquitto_connect(mosq, MQTT_HOST, MQTT_PORT, 30);
-    if (ret == MOSQ_ERR_SUCCESS)
-      syslog(LOG_INFO, "MQTT connection to %s established.", MQTT_HOST);
-    else {
-        syslog(LOG_ERR, "MQTT error %d (%s)!", 
-                        ret,
-                        mosquitto_strerror(ret));
-        //TODO cleanup
-        return -1;
-    }      
-  }
-  
-  // subscribe to Ampel topic
-  if (mosq) {
+    int ret = mqtt_service_connect(mosq, MQTT_HOST, MQTT_PORT, 30);
+    if (ret != MOSQ_ERR_SUCCESS) {
+      mqtt_service_cleanup(mosq);
+      service_stop("Ampel controller finished.");
+      return -1;
+    }
+
     mosquitto_message_callback_set(mosq, mqtt_message_callback);
     mosquitto_subscribe(mosq, NULL, MQTT_AMPEL_TOPIC, 0);
   }
 
-  char run=1;
-  int i=0;
-  while(run) {
-    // call the mosquitto loop to process messages
-    if (mosq) {
-      int ret;
-      ret = mosquitto_loop(mosq, 100, 1);
-      // if failed, try to reconnect
-      if (ret) {
-        syslog(LOG_ERR, "MQTT reconnect.");
-        mosquitto_reconnect(mosq);
-      }
-    }
-    
-    if (sleep(1)) 
+  while (1) {
+    mqtt_service_loop(mosq, 100);
+
+    if (sleep(1))
       break;
   }
 
-  // clean-up MQTT
-  if (mosq) {
-    mosquitto_disconnect(mosq);
-    mosquitto_destroy(mosq);
-  }
-  mosquitto_lib_cleanup();
-
-  syslog(LOG_INFO, "Ampel controller finished.");
-  closelog();
-    
+  mqtt_service_cleanup(mosq);
+  service_stop("Ampel controller finished.");
   return 0;
 }
