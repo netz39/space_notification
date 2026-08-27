@@ -7,8 +7,6 @@
 #include <unistd.h>
 #include <string.h>
 
-#include <time.h>
-#include <sys/time.h>
 #include <syslog.h>
 
 #include "../common/i2c_command.h"
@@ -38,16 +36,6 @@ struct lever_state_t {
   bool lever_open;	// Lever is in state open
   bool lever_closed;	// Lever is in state closed
 };
-
-/**
- * Get the milliseconds since epoch.
- */
-long current_millis() {
-  struct timeval tv;
-  gettimeofday(&tv, 0);
-  
-  return tv.tv_sec*1000L + tv.tv_usec/1000L;
-}
 
 ///// I2C stuff /////
 
