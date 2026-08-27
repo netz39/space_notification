@@ -1,0 +1,13 @@
+[Unit]
+Description=Ampel LED Controller
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/ledcontrol
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
