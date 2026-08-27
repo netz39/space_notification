@@ -1,0 +1,4 @@
+*.o
+*~
+ledcontrol/ledcontrol
+statusswitch/statusswitch
