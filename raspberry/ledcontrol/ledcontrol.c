@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "../common/i2c_command.h"
 #include "../common/mqtt_service.h"
@@ -15,12 +16,26 @@
 const char* MQTT_HOST 		= "platon.n39.eu";
 const int   MQTT_PORT 		= 1883;
 const char* MQTT_AMPEL_TOPIC	= "Netz39/Things/Ampel/Light";
+const char* MQTT_NIGHTMODE_TOPIC= "Netz39/Nightmode";
+
+/* Duration (seconds) to keep LEDs on after an ampel change during nightmode */
+#define NIGHTMODE_VISIBILITY_SECS 2
 
 struct ampel_state_t {
   bool red;
   bool green;
   bool blink;
 };
+
+/* Global nightmode state */
+static bool nightmode_active = false;
+
+/* Most recently requested ampel state (independent of physical output) */
+static struct ampel_state_t requested_state = { false, false, false };
+
+/* Monotonic time (seconds) when the brief nightmode visibility expires;
+ * 0 means no timer is running. */
+static time_t nightmode_show_until = 0;
 
 ///// I2C stuff /////
 
@@ -54,6 +69,16 @@ void I3C_reset_ampel() {
 
 ///// Ampel /////
 
+static const struct ampel_state_t AMPEL_OFF = { false, false, false };
+static const struct ampel_state_t AMPEL_RED = { true, false, false };
+static const struct ampel_state_t AMPEL_GREEN = { false, true, false };
+
+static time_t monotonic_now(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec;
+}
+
 uint8_t ampel_set_color(struct ampel_state_t color) {
   uint8_t val = 0;
   val |= color.red   ? AMPEL_VAL_RED   : 0;
@@ -67,7 +92,39 @@ uint8_t ampel_set_color(struct ampel_state_t color) {
   return ret;
 }
 
+/**
+ * Apply physical LED output based on current nightmode state.
+ * During nightmode the LEDs stay off unless the brief visibility timer is
+ * active.  Outside nightmode the requested state is shown as-is.
+ */
+static void apply_physical_state(void) {
+  if (!nightmode_active) {
+    ampel_set_color(requested_state);
+    return;
+  }
+
+  if (nightmode_show_until != 0 && monotonic_now() < nightmode_show_until)
+    ampel_set_color(requested_state);
+  else
+    ampel_set_color(AMPEL_OFF);
+}
+
 ///// Command events
+static bool mqtt_subscribe_topic(struct mosquitto *mosq,
+                                 const char *topic)
+{
+  const int ret = mosquitto_subscribe(mosq, NULL, topic, 0);
+
+  if (ret != MOSQ_ERR_SUCCESS) {
+    syslog(LOG_ERR, "Failed to subscribe to MQTT topic '%s': %s",
+           topic, mosquitto_strerror(ret));
+    return false;
+  }
+
+  syslog(LOG_INFO, "Subscribed to MQTT topic '%s'.", topic);
+  return true;
+}
+
 static void mqtt_connect_callback(struct mosquitto *mosq,
                                   void *obj,
                                   int rc)
@@ -78,15 +135,14 @@ static void mqtt_connect_callback(struct mosquitto *mosq,
     return;
   }
 
-  const int ret = mosquitto_subscribe(
-      mosq, NULL, MQTT_AMPEL_TOPIC, 0);
+  const bool ampel_subscribed =
+      mqtt_subscribe_topic(mosq, MQTT_AMPEL_TOPIC);
 
-  if (ret != MOSQ_ERR_SUCCESS) {
-    syslog(LOG_ERR, "MQTT subscribe failed: %s",
-           mosquitto_strerror(ret));
-  } else {
-    syslog(LOG_INFO, "Subscribed to MQTT topic '%s'.",
-           MQTT_AMPEL_TOPIC);
+  const bool nightmode_subscribed =
+      mqtt_subscribe_topic(mosq, MQTT_NIGHTMODE_TOPIC);
+
+  if (!ampel_subscribed || !nightmode_subscribed) {
+    syslog(LOG_ERR, "One or more MQTT subscriptions failed.");
   }
 }
 
@@ -99,9 +155,9 @@ void mqtt_message_callback(struct mosquitto *mosq,
   else
     syslog(LOG_INFO, "Got empty message for topic '%s'\n", message->topic);
 
-  bool match = false;
-  mosquitto_topic_matches_sub(MQTT_AMPEL_TOPIC, message->topic, &match);
-  if (match) {
+  bool match_ampel = false;
+  mosquitto_topic_matches_sub(MQTT_AMPEL_TOPIC, message->topic, &match_ampel);
+  if (match_ampel) {
     struct ampel_state_t state = { .red = false, .green = false, .blink = false };
 
     if (mqtt_payload_equals(message, "red")) {
@@ -116,8 +172,31 @@ void mqtt_message_callback(struct mosquitto *mosq,
       state.blink = true;
     }
 
-    // Set the traffic light state
-    ampel_set_color(state);
+    requested_state = state;
+
+    if (nightmode_active) {
+      /* Show state briefly; (re)start the visibility timer */
+      nightmode_show_until = monotonic_now() + NIGHTMODE_VISIBILITY_SECS;
+    }
+
+    apply_physical_state();
+    return;
+  }
+
+  bool match_nightmode = false;
+  mosquitto_topic_matches_sub(MQTT_NIGHTMODE_TOPIC, message->topic, &match_nightmode);
+  if (match_nightmode) {
+    if (mqtt_payload_equals(message, "on")) {
+      syslog(LOG_INFO, "Nightmode enabled.");
+      nightmode_active = true;
+      nightmode_show_until = 0;
+      ampel_set_color(AMPEL_OFF);
+    } else if (mqtt_payload_equals(message, "off")) {
+      syslog(LOG_INFO, "Nightmode disabled.");
+      nightmode_active = false;
+      nightmode_show_until = 0;
+      ampel_set_color(requested_state);
+    }
   }
 }
 
@@ -128,6 +207,14 @@ int main(int argc, char *argv[]) {
 
   // initialize I2C
   I2C_init();
+
+  // Show a start-up sequence
+  ampel_set_color(AMPEL_RED);
+  sleep(1);
+  ampel_set_color(AMPEL_GREEN);
+  sleep(1);
+  ampel_set_color(AMPEL_OFF);
+  sleep(1);
 
   // initialize MQTT
   struct mosquitto *mosq = mqtt_service_init("ampel");
@@ -152,8 +239,19 @@ int main(int argc, char *argv[]) {
 
   while (service_is_running()) {
     mqtt_service_loop(mosq, 100);
+
+    /* During nightmode, check if the brief visibility timer has just expired */
+    if (nightmode_active && nightmode_show_until != 0
+        && monotonic_now() >= nightmode_show_until) {
+      nightmode_show_until = 0;
+      ampel_set_color(AMPEL_OFF);
+    }
+
     sleep(1);
   }
+
+  // Leave illumination in a safe state on shutdown.
+  ampel_set_color(AMPEL_OFF);
 
   mqtt_service_cleanup(mosq);
   service_stop("Ampel controller finished.");
